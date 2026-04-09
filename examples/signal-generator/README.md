@@ -9,4 +9,4 @@ MCU pinout:
 * PB10 = rotary encoder button
 * PA3, PA4 = two more buttons
 
-Article (in Russian): https://eax.me/si5351-signal-generator/
+Article (in Russian): https://eax.me/2021/2021-10-13-si5351-signal-generator.html
