@@ -22,5 +22,5 @@
 "./driverlib/MSP430FR2xx_4xx/timer_b.obj"
 "./driverlib/MSP430FR2xx_4xx/tlv.obj"
 "./driverlib/MSP430FR2xx_4xx/wdt_a.obj"
-"../lnk_msp430fr4133.cmd"
+"../lnk_msp430fr2476.cmd"
 -llibc.a

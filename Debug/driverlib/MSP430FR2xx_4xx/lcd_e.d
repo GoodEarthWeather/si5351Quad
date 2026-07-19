@@ -3,11 +3,11 @@
 driverlib/MSP430FR2xx_4xx/lcd_e.obj: ../driverlib/MSP430FR2xx_4xx/lcd_e.c
 driverlib/MSP430FR2xx_4xx/lcd_e.obj: ../driverlib/MSP430FR2xx_4xx/inc/hw_memmap.h
 driverlib/MSP430FR2xx_4xx/lcd_e.obj: /home/david/ti/ccs1281/ccs/ccs_base/msp430/include/msp430.h
-driverlib/MSP430FR2xx_4xx/lcd_e.obj: /home/david/ti/ccs1281/ccs/ccs_base/msp430/include/msp430fr4133.h
+driverlib/MSP430FR2xx_4xx/lcd_e.obj: /home/david/ti/ccs1281/ccs/ccs_base/msp430/include/msp430fr2476.h
 driverlib/MSP430FR2xx_4xx/lcd_e.obj: /home/david/ti/ccs1281/ccs/ccs_base/msp430/include/in430.h
 driverlib/MSP430FR2xx_4xx/lcd_e.obj: /home/david/ti/ccs1281/ccs/tools/compiler/ti-cgt-msp430_21.6.2.LTS/include/intrinsics.h
 driverlib/MSP430FR2xx_4xx/lcd_e.obj: /home/david/ti/ccs1281/ccs/tools/compiler/ti-cgt-msp430_21.6.2.LTS/include/intrinsics_legacy_undefs.h
-driverlib/MSP430FR2xx_4xx/lcd_e.obj: /home/david/ti/ccs1281/ccs/ccs_base/msp430/include/msp430fr2xx_4xxgeneric.h
+driverlib/MSP430FR2xx_4xx/lcd_e.obj: /home/david/ti/ccs1281/ccs/ccs_base/msp430/include/legacy.h
 driverlib/MSP430FR2xx_4xx/lcd_e.obj: /home/david/ti/ccs1281/ccs/tools/compiler/ti-cgt-msp430_21.6.2.LTS/include/stdint.h
 driverlib/MSP430FR2xx_4xx/lcd_e.obj: /home/david/ti/ccs1281/ccs/tools/compiler/ti-cgt-msp430_21.6.2.LTS/include/_ti_config.h
 driverlib/MSP430FR2xx_4xx/lcd_e.obj: /home/david/ti/ccs1281/ccs/tools/compiler/ti-cgt-msp430_21.6.2.LTS/include/linkage.h
@@ -19,8 +19,6 @@ driverlib/MSP430FR2xx_4xx/lcd_e.obj: /home/david/ti/ccs1281/ccs/tools/compiler/t
 driverlib/MSP430FR2xx_4xx/lcd_e.obj: /home/david/ti/ccs1281/ccs/tools/compiler/ti-cgt-msp430_21.6.2.LTS/include/machine/_stdint.h
 driverlib/MSP430FR2xx_4xx/lcd_e.obj: /home/david/ti/ccs1281/ccs/tools/compiler/ti-cgt-msp430_21.6.2.LTS/include/sys/_stdint.h
 driverlib/MSP430FR2xx_4xx/lcd_e.obj: /home/david/ti/ccs1281/ccs/tools/compiler/ti-cgt-msp430_21.6.2.LTS/include/stdbool.h
-driverlib/MSP430FR2xx_4xx/lcd_e.obj: ../driverlib/MSP430FR2xx_4xx/lcd_e.h
-driverlib/MSP430FR2xx_4xx/lcd_e.obj: /home/david/ti/ccs1281/ccs/tools/compiler/ti-cgt-msp430_21.6.2.LTS/include/assert.h
 
 ../driverlib/MSP430FR2xx_4xx/lcd_e.c:
 
@@ -28,7 +26,7 @@ driverlib/MSP430FR2xx_4xx/lcd_e.obj: /home/david/ti/ccs1281/ccs/tools/compiler/t
 
 /home/david/ti/ccs1281/ccs/ccs_base/msp430/include/msp430.h:
 
-/home/david/ti/ccs1281/ccs/ccs_base/msp430/include/msp430fr4133.h:
+/home/david/ti/ccs1281/ccs/ccs_base/msp430/include/msp430fr2476.h:
 
 /home/david/ti/ccs1281/ccs/ccs_base/msp430/include/in430.h:
 
@@ -36,7 +34,7 @@ driverlib/MSP430FR2xx_4xx/lcd_e.obj: /home/david/ti/ccs1281/ccs/tools/compiler/t
 
 /home/david/ti/ccs1281/ccs/tools/compiler/ti-cgt-msp430_21.6.2.LTS/include/intrinsics_legacy_undefs.h:
 
-/home/david/ti/ccs1281/ccs/ccs_base/msp430/include/msp430fr2xx_4xxgeneric.h:
+/home/david/ti/ccs1281/ccs/ccs_base/msp430/include/legacy.h:
 
 /home/david/ti/ccs1281/ccs/tools/compiler/ti-cgt-msp430_21.6.2.LTS/include/stdint.h:
 
@@ -59,8 +57,4 @@ driverlib/MSP430FR2xx_4xx/lcd_e.obj: /home/david/ti/ccs1281/ccs/tools/compiler/t
 /home/david/ti/ccs1281/ccs/tools/compiler/ti-cgt-msp430_21.6.2.LTS/include/sys/_stdint.h:
 
 /home/david/ti/ccs1281/ccs/tools/compiler/ti-cgt-msp430_21.6.2.LTS/include/stdbool.h:
-
-../driverlib/MSP430FR2xx_4xx/lcd_e.h:
-
-/home/david/ti/ccs1281/ccs/tools/compiler/ti-cgt-msp430_21.6.2.LTS/include/assert.h:
 

@@ -8,10 +8,11 @@
 #include "driverlib.h"
 #include <stdint.h>
 
-// Si5351 I2C Target Address
 #define SI5351_ADDRESS          0x60
+#define XTAL_FREQ               27000000ULL  // 27 MHz Crystal Oscillator
 
 // Critical Si5351 Registers
+#define DEVICE_STATUS           0
 #define REG_OUTPUT_ENABLE       3
 #define REG_CLK0_CTRL           16
 #define REG_CLK1_CTRL           17
@@ -24,248 +25,334 @@
 #define REG_MS0_PARAMETERS      42
 #define REG_MS1_PARAMETERS      50
 #define REG_MS2_PARAMETERS      58
+#define SSEN                   149
+#define XTAL_LOAD_CAP          183
 
-// Driverlib I2C Initialization Helper
+#define FIXED_DENOM             1000000ULL
+#define I2C_RECEIVE 0
+#define I2C_SEND 1
+
+static uint8_t RXData[4];  // used by interrupt routine to hold received data
+static uint8_t TXData[4];
+static uint8_t byteCount;
+static uint8_t I2CMode;  // indicate whether I2C is sending or receiving
+
+void i2cReceiveData(void);
+void i2cSendRegister(uint8_t, uint8_t);
+void si5351_wait_for_init(void);
+void update_vfo_target(uint32_t, uint32_t);
+void enable_TransmitMode(void);
+void enable_ReceiveMode(void);
+void calculate_and_load_pll(uint32_t, uint32_t);
+void set_pll_fractional(uint32_t, uint32_t);
+void set_integer_ms(uint8_t, uint32_t);
+void initI2C(void);
+void initClocks(void);
+
+// Global tracking variables for quick TR switching
+uint32_t current_vfo_hz = 14074000;
+uint32_t current_ms_div = 64;
+
+void main(void) {
+    WDT_A_hold(WDT_A_BASE);
+    PMM_unlockLPM5();
+
+    // 1. Initialize hardware clocks and active I2C peripheral lanes
+    initClocks();
+    initI2C();
+
+    // 2. NEW: Wait until the Si5351 clears its internal NVM boot flag
+    si5351_wait_for_init();
+
+    // 3. Safe to proceed with active device initialization parameters
+    // Register 183 sets Crystal Load Capacitance (Optional, highly recommended for stabilization)
+    // 0xD2 = 10pF, 0x92 = 8pF, 0x52 = 6pF
+    i2cSendRegister(XTAL_LOAD_CAP, 0xD2);      // Set crystal load capacitor to 10pF (default)
+
+    // 3. NEW: Explicitly strip out Spread Spectrum frequency modulation
+    i2cSendRegister(SSEN, 0x0);                // Disable spread spectrum
+
+    // 4. Default VFO tune to 20-Meter FT8 frequency (14.074 MHz)
+    update_vfo_target(14074000, 64);
+
+    while(1) {
+        // T/R switching loops go here
+    }
+}
+
+void initClocks(void)
+{
+    // for crystal pins
+    GPIO_setAsPeripheralModuleFunctionInputPin(
+        GPIO_PORT_P2,
+        GPIO_PIN0 + GPIO_PIN1,
+        GPIO_PRIMARY_MODULE_FUNCTION);
+
+
+    //Initialize external 32.768kHz clock
+    CS_setExternalClockSource(32768);
+    CS_turnOnXT1LF(CS_XT1_DRIVE_3);
+
+    //Set DCO frequency to 8MHz
+    CS_initClockSignal(CS_FLLREF,CS_XT1CLK_SELECT,CS_CLOCK_DIVIDER_1);
+    CS_initFLLSettle(8000,244);  // 244*32.768 is approximately 8000kHz = 8MHz
+    //Set ACLK = External 32.768kHz clock with frequency divider of 1
+    CS_initClockSignal(CS_ACLK,CS_XT1CLK_SELECT,CS_CLOCK_DIVIDER_1);
+    //Set SMCLK = DCO with frequency divider of 1
+    CS_initClockSignal(CS_SMCLK,CS_DCOCLKDIV_SELECT,CS_CLOCK_DIVIDER_1);
+    //Set MCLK = DCO with frequency divider of 1
+    CS_initClockSignal(CS_MCLK,CS_DCOCLKDIV_SELECT,CS_CLOCK_DIVIDER_1);
+
+    //Clear all OSC fault flag
+    CS_clearAllOscFlagsWithTimeout(1000);
+}
+
 void initI2C(void) {
-    // Configure Pins for I2C: P1.2 = SDA, P1.3 = SCL (Verify your specific package schematic)
+    // P1.2 = SDA, P1.3 = SCL
     GPIO_setAsPeripheralModuleFunctionOutputPin(GPIO_PORT_P1, GPIO_PIN2 | GPIO_PIN3, GPIO_PRIMARY_MODULE_FUNCTION);
+}
 
+void set_integer_ms(uint8_t base_reg, uint32_t divider) {
+    // FIXED: Appended UL to constant to enforce 32-bit register math width
+    uint32_t p1 = 128UL * divider - 512UL;
+
+    i2cSendRegister(base_reg,0);
+    i2cSendRegister(base_reg+1,1);
+    i2cSendRegister(base_reg+2,(p1 >> 16) & 0x03);
+    i2cSendRegister(base_reg+3,(p1 >> 8) & 0xFF);
+    i2cSendRegister(base_reg+4,p1 & 0xFF);
+    i2cSendRegister(base_reg+5,0);
+    i2cSendRegister(base_reg+6,0);
+    i2cSendRegister(base_reg+7,0x40); // Integer Mode override bit
+
+   }
+
+void set_pll_fractional(uint32_t mult_integer, uint32_t mult_numerator) {
+
+    // FIXED: All literal constants have explicitly assigned type width qualifiers (UL/ULL)
+    uint32_t p1 = 128UL * mult_integer + ((128UL * mult_numerator) / FIXED_DENOM) - 512UL;
+    uint32_t p2 = 128UL * mult_numerator - FIXED_DENOM * ((128UL * mult_numerator) / FIXED_DENOM);
+    uint32_t p3 = (uint32_t)FIXED_DENOM;
+
+    i2cSendRegister(REG_PLLA_PARAMETERS,(p3 >> 8) & 0xFF);
+    i2cSendRegister(REG_PLLA_PARAMETERS+1,p3 & 0xFF);
+    i2cSendRegister(REG_PLLA_PARAMETERS+2,(p1 >> 16) & 0x03);
+    i2cSendRegister(REG_PLLA_PARAMETERS+3,(p1 >> 8) & 0xFF);
+    i2cSendRegister(REG_PLLA_PARAMETERS+4,p1 & 0xFF);
+    i2cSendRegister(REG_PLLA_PARAMETERS+5,(((p3 >> 16) & 0x0F) << 4) | ((p2 >> 16) & 0x0F));
+    i2cSendRegister(REG_PLLA_PARAMETERS+6,(p2 >> 8) & 0xFF);
+    i2cSendRegister(REG_PLLA_PARAMETERS+7,p2 & 0xFF);
+
+}
+
+void calculate_and_load_pll(uint32_t target_hz, uint32_t ms_div) {
+    uint64_t vco_hz = (uint64_t)target_hz * (uint64_t)ms_div;
+    uint32_t pll_mult_int = (uint32_t)(vco_hz / XTAL_FREQ);
+    uint32_t pll_mult_num = (uint32_t)(((vco_hz % XTAL_FREQ) * FIXED_DENOM) / XTAL_FREQ);
+
+    set_pll_fractional(pll_mult_int, pll_mult_num);
+}
+
+void enable_ReceiveMode(void) {
+    i2cSendRegister(REG_OUTPUT_ENABLE, 0xFF);
+    calculate_and_load_pll(current_vfo_hz, current_ms_div);
+
+    set_integer_ms(REG_MS0_PARAMETERS, current_ms_div);
+    set_integer_ms(REG_MS1_PARAMETERS, current_ms_div);
+
+    i2cSendRegister(REG_CLK0_PHOFF, 0);
+    i2cSendRegister(REG_CLK1_PHOFF, (uint8_t)current_ms_div);
+
+    i2cSendRegister(REG_PLL_RESET, 0x20);
+
+    i2cSendRegister(REG_CLK2_CTRL, 0x80);
+    i2cSendRegister(REG_CLK0_CTRL, 0x4F);
+    i2cSendRegister(REG_CLK1_CTRL, 0x4F);
+
+    i2cSendRegister(REG_OUTPUT_ENABLE, 0xFC);
+}
+
+void enable_TransmitMode(void) {
+    i2cSendRegister(REG_OUTPUT_ENABLE, 0xFF);
+    calculate_and_load_pll(current_vfo_hz, current_ms_div);
+
+    set_integer_ms(REG_MS2_PARAMETERS, current_ms_div);
+
+    i2cSendRegister(REG_PLL_RESET, 0x20);
+
+    i2cSendRegister(REG_CLK0_CTRL, 0x80);
+    i2cSendRegister(REG_CLK1_CTRL, 0x80);
+    i2cSendRegister(REG_CLK2_CTRL, 0x4F);
+
+    i2cSendRegister(REG_OUTPUT_ENABLE, 0xFB);
+}
+
+void update_vfo_target(uint32_t target_hz, uint32_t ms_div) {
+    current_vfo_hz = target_hz;
+    current_ms_div = ms_div;
+    enable_ReceiveMode();
+}
+
+
+// Polling loop to block until the Si5351 internal logic finishes booting up
+void si5351_wait_for_init(void) {
+    do {
+        i2cSendRegister(DEVICE_STATUS,0);  // write address of status register
+        RXData[0] = 0;
+        i2cReceiveData();
+    } while (RXData[0] & 0x80);  // keep doing this until SYS_INIT bit is low
+}
+
+
+#pragma vector=USCI_B0_VECTOR
+__interrupt
+void USCIB0_ISR(void)
+{
+    static uint8_t count = 0;
+    switch(__even_in_range(UCB0IV,0x1E))
+    {
+    case 0x00: break;       // Vector 0: No interrupts break;
+    case 0x02: break;       // Vector 2: ALIFG break;
+    case 0x04:
+        if (I2CMode == I2C_RECEIVE) {
+            EUSCI_B_I2C_masterReceiveStart(EUSCI_B0_BASE);
+        } else {
+            EUSCI_B_I2C_masterSendStart(EUSCI_B0_BASE);
+        }
+        break;     // Vector 4: NACKIFG break;
+    case 0x06: break;       // Vector 6: STT IFG break;
+    case 0x08: break;       // Vector 8: STPIFG break;
+    case 0x0a: break;       // Vector 10: RXIFG3 break;
+    case 0x0c: break;       // Vector 14: TXIFG3 break;
+    case 0x0e: break;       // Vector 16: RXIFG2 break;
+    case 0x10: break;       // Vector 18: TXIFG2 break;
+    case 0x12: break;       // Vector 20: RXIFG1 break;
+    case 0x14: break;       // Vector 22: TXIFG1 break;
+    case 0x16:
+        RXData[count++] = EUSCI_B_I2C_masterReceiveSingle(EUSCI_B0_BASE);   // Get RX data
+        if ( count == byteCount) {
+            count = 0;
+            __bic_SR_register_on_exit(LPM0_bits); // Exit LPM0
+        }
+        break;     // Vector 24: RXIFG0 break;
+    case 0x18:
+        if (++count < byteCount)                    // Check TX byte counter
+        {
+            EUSCI_B_I2C_masterSendMultiByteNext(EUSCI_B0_BASE,TXData[count] );
+        }
+        else
+        {
+            EUSCI_B_I2C_masterSendMultiByteStop(EUSCI_B0_BASE);
+            count = 0;
+            __bic_SR_register_on_exit(LPM0_bits);// Exit LPM0
+        }
+
+        break;       // Vector 26: TXIFG0 break;
+    case 0x1a: break;           // Vector 28: BCNTIFG break;
+    case 0x1c: break;       // Vector 30: clock low timeout break;
+    case 0x1e: break;       // Vector 32: 9th bit break;
+    default: break;
+    }
+}
+
+/**************** I2C Send Command ******************/
+// This routine will send I2C data - it will send two bytes - the register and the data
+// address is the slave address
+// set byteCount to the number of bytes to send
+void i2cSendRegister(uint8_t reg, uint8_t data)
+{
+
+    I2CMode = I2C_SEND;
+    // Set up I2C block for transmission
     EUSCI_B_I2C_initMasterParam param = {0};
     param.selectClockSource = EUSCI_B_I2C_CLOCKSOURCE_SMCLK;
     param.i2cClk = CS_getSMCLK();
-    param.dataRate = EUSCI_B_I2C_SET_DATA_RATE_400KBPS; // Fast mode I2C
+    param.dataRate = EUSCI_B_I2C_SET_DATA_RATE_100KBPS;
     param.byteCounterThreshold = 0;
     param.autoSTOPGeneration = EUSCI_B_I2C_NO_AUTO_STOP;
-
     EUSCI_B_I2C_initMaster(EUSCI_B0_BASE, &param);
+
+    //Specify slave address
     EUSCI_B_I2C_setSlaveAddress(EUSCI_B0_BASE, SI5351_ADDRESS);
+    //Set Master in transmit mode
+    EUSCI_B_I2C_setMode(EUSCI_B0_BASE, EUSCI_B_I2C_TRANSMIT_MODE);
+    //Enable I2C Module to start operations
     EUSCI_B_I2C_enable(EUSCI_B0_BASE);
+    // set up interrupts
+    EUSCI_B_I2C_clearInterrupt(EUSCI_B0_BASE,
+                EUSCI_B_I2C_TRANSMIT_INTERRUPT0 +
+                EUSCI_B_I2C_NAK_INTERRUPT
+                );
+    //Enable master Receive interrupt
+    EUSCI_B_I2C_enableInterrupt(EUSCI_B0_BASE,
+                EUSCI_B_I2C_TRANSMIT_INTERRUPT0 +
+                EUSCI_B_I2C_NAK_INTERRUPT
+              );
+    // make sure stop has been sent
+    while (EUSCI_B_I2C_SENDING_STOP == EUSCI_B_I2C_masterIsStopSent
+            (EUSCI_B0_BASE));
+
+    TXData[0] = reg;
+    TXData[1] = data;
+    ( reg == DEVICE_STATUS ) ? (byteCount = 1) : (byteCount = 2);
+
+    EUSCI_B_I2C_masterSendMultiByteStart(EUSCI_B0_BASE, TXData[0]);
+    // now sleep while I2C block sends all the data
+    __bis_SR_register(LPM0_bits + GIE);
+    //Delay until transmission completes before returning
+    while(EUSCI_B_I2C_isBusBusy(EUSCI_B0_BASE)) {;}
 }
 
-// Low-Level I2C Write Wrapper using TI Driverlib
-void si5351_write(uint8_t reg, uint8_t value) {
-    uint8_t txData[2] = {reg, value};
 
-    // Send start condition and the multi-byte packet
-    EUSCI_B_I2C_masterSendMultiByteStart(EUSCI_B0_BASE, txData[0]);
-    EUSCI_B_I2C_masterSendMultiByteNext(EUSCI_B0_BASE, txData[1]);
-    EUSCI_B_I2C_masterSendMultiByteStop(EUSCI_B0_BASE);
-
-    // Wait for transmission completion
-    while (EUSCI_B_I2C_isBusBusy(EUSCI_B0_BASE));
-}
-
-// Helper to flash continuous block parameter data to MultiSynth/PLL tracks
-void si5351_write_block(uint8_t start_reg, uint8_t *data, uint8_t len) {
-    uint8_t i;
-
-    EUSCI_B_I2C_masterSendMultiByteStart(EUSCI_B0_BASE, start_reg);
-    for(i = 0; i < len; i++) {
-        if(i == (len - 1)) {
-            EUSCI_B_I2C_masterSendMultiByteStop(EUSCI_B0_BASE);
-        }
-        EUSCI_B_I2C_masterSendMultiByteNext(EUSCI_B0_BASE, data[i]);
-    }
-    while (EUSCI_B_I2C_isBusBusy(EUSCI_B0_BASE));
-}
-
-/*
- * Sets up an Integer Mode parameters array for MultiSynth or PLL blocks
- * Precalculated for fixed layouts (e.g. Divider = 32)
- */
-void set_integer_ms(uint8_t base_reg, uint32_t divider) {
-    uint8_t config[8];
-    uint32_t p1 = 128 * divider - 512;
-
-    config[0] = 0;
-    config[1] = 1; // MSx_INT_MODE = 1
-    config[2] = (p1 >> 16) & 0x03;
-    config[3] = (p1 >> 8) & 0xFF;
-    config[4] = p1 & 0xFF;
-    config[5] = 0;
-    config[6] = 0;
-    config[7] = 0;
-
-    si5351_write_block(base_reg, config, 8);
-}
-
-// Setup PLL configuration helper
-void set_pll(uint8_t base_reg, uint32_t mult) {
-    uint8_t config[8];
-    uint32_t p1 = 128 * mult - 512;
-
-    config[0] = 0;
-    config[1] = 0;
-    config[2] = (p1 >> 16) & 0x03;
-    config[3] = (p1 >> 8) & 0xFF;
-    config[4] = p1 & 0xFF;
-    config[5] = 0;
-    config[6] = 0;
-    config[7] = 0;
-
-    si5351_write_block(base_reg, config, 8);
-}
-
-/*
- * 1. ENABLE RECEIVE MODE
- * Configures CLK0 and CLK1 in Quadrature (90 deg out of phase).
- * Disables CLK2 (Transmit clock).
- */
-void enable_ReceiveMode(uint32_t target_frequency_hz) {
-    // Choose an even MultiSynth division factor
-    uint32_t ms_divider = 32;
-    uint32_t pll_multiplier = (target_frequency_hz * ms_divider) / 25000000; // Assuming 25MHz reference Xtal
-
-    // Disable all outputs first to guard against phase glitches
-    si5351_write(REG_OUTPUT_ENABLE, 0xFF);
-
-    // Setup PLLA to feed both RX MultiSynths
-    set_pll(REG_PLLA_PARAMETERS, pll_multiplier);
-
-    // Configure MS0 and MS1 to matching even integer divider setups
-    set_integer_ms(REG_MS0_PARAMETERS, ms_divider);
-    set_integer_ms(REG_MS1_PARAMETERS, ms_divider);
-
-    // Setup Clocks: Source = PLLA, Integer Mode Enabled, Drive strength 8mA
-    si5351_write(REG_CLK0_CTRL, 0x4F);
-    si5351_write(REG_CLK1_CTRL, 0x4F);
-
-    // Set Quadrature offsets: Phase dynamic value = MS_Divider factor
-    si5351_write(REG_CLK0_PHOFF, 0);
-    si5351_write(REG_CLK1_PHOFF, (uint8_t)ms_divider); // 90 degrees offset
-
-    // Reset PLL A to apply phase syncing rules simultaneously
-    si5351_write(REG_PLL_RESET, 0xA0);
-
-    // Enable CLK0 & CLK1, Keep CLK2 disabled (Bit high means off)
-    si5351_write(REG_OUTPUT_ENABLE, 0xFC);
-}
-
-/*
- * 2. ENABLE TRANSMIT MODE
- * Configures CLK2 as the main Transmit output.
- * Shuts down CLK0 and CLK1 (Receive quadrature tracks).
- */
-void enable_TransmitMode(uint32_t target_frequency_hz) {
-    uint32_t ms_divider = 32;
-    uint32_t pll_multiplier = (target_frequency_hz * ms_divider) / 25000000;
-
-    // Mask output tracks off
-    si5351_write(REG_OUTPUT_ENABLE, 0xFF);
-
-    // Setup PLLA for Transmit
-    set_pll(REG_PLLA_PARAMETERS, pll_multiplier);
-    set_integer_ms(REG_MS2_PARAMETERS, ms_divider);
-
-    // Setup CLK2: Connected to PLLA, Integer Mode, 8mA Drive
-    si5351_write(REG_CLK2_CTRL, 0x4F);
-
-    // Reset PLLA
-    si5351_write(REG_PLL_RESET, 0xA0);
-
-    // Enable only CLK2 output (CLK0 and CLK1 are masked off: 0b11111011)
-    si5351_write(REG_OUTPUT_ENABLE, 0xFB);
-}
-
-void main(void) {
-    WDT_A_hold(WDT_A_BASE); // Stop watchdog timer
-
-    // Enable GPIO default lock mechanisms
-    PMM_unlockLPM5();
-
-    initI2C();
-
-    // Example: Initiate listening on the 20-meter band (14.1 MHz)
-    enable_ReceiveMode(14100000);
-
-    while(1) {
-        // Application code handles Transmit/Receive sequencing inputs here
-    }
-}
-/**********************************************************************
-void CalcRegisters(const uint32_t fout, uint8_t *regs)
+/*************** I2C Receive Command *****************/
+// This routine will receive I2C data
+// address is the slave address
+// received data is put into RXData vector
+// set byteCount to the number of bytes to receive
+void i2cReceiveData(void)
 {
-    uint32_t fref = 27000000;                  // The reference frequency
 
-    // Calc Output Multisynth Divider and R with e = 0 and f = 1 => msx_p2 = 0 and msx_p3 = 1
-    uint32_t d = 4;
-    uint32_t msx_p1 = 0;                         // If fout > 150 MHz then MSx_P1 = 0 and MSx_DIVBY4 = 0xC0, see datasheet 4.1.3
-    int msx_divby4 = 0;
-    int rx_div = 0;
-    int r = 1;
+    I2CMode = I2C_RECEIVE;
 
-    if (fout > 150000000)
-        msx_divby4 = 0x0C;                       // MSx_DIVBY4[1:0] = 0b11, see datasheet 4.1.3
-    else if (fout < 292969)                    // If fout < 500 kHz then use R divider, see datasheet 4.2.2. In reality this means > 292 968,75 Hz when d = 2048
-    {
-        int rd = 0;
-        while ((r < 128) && (r * fout < 292969))
-        {
-            r <<= 1;
-            rd++;
-        }
-        rx_div = rd << 4;
+    // for the si5351, only one receive function is ever used - reading the device status register
+    // so can always set byteCount to be 1
+    byteCount = 1;
 
-        d = 600000000 / (r * fout);            // Use lowest VCO frequency but handle d minimum
-        if (d % 2)                               // Make d even to reduce spurious and phase noise/jitter, see datasheet 4.1.2.1.
-            d++;
+    // Set up I2C block for reception
+    EUSCI_B_I2C_initMasterParam param = {0};
+    param.selectClockSource = EUSCI_B_I2C_CLOCKSOURCE_SMCLK;
+    param.i2cClk = CS_getSMCLK();
+    param.dataRate = EUSCI_B_I2C_SET_DATA_RATE_100KBPS;
+    param.byteCounterThreshold = byteCount;
+    param.autoSTOPGeneration = EUSCI_B_I2C_SEND_STOP_AUTOMATICALLY_ON_BYTECOUNT_THRESHOLD;
+    EUSCI_B_I2C_initMaster(EUSCI_B0_BASE, &param);
 
-        if (d * r * fout < 600000000)          // VCO frequency to low check and maintain an even d value
-            d += 2;
-    }
-    else                                         // 292968 Hz <= fout <= 150 MHz
-    {
-        d = 600000000 / fout;                  // Use lowest VCO frequency but handle d minimum
-        if (d < 6)
-            d = 6;
-        else if (d % 2)                          // Make d even to reduce phase noise/jitter, see datasheet 4.1.2.1.
-           d++;
+    //Specify slave address
+    EUSCI_B_I2C_setSlaveAddress(EUSCI_B0_BASE, SI5351_ADDRESS);
+    //Set Master in receive mode
+    EUSCI_B_I2C_setMode(EUSCI_B0_BASE, EUSCI_B_I2C_RECEIVE_MODE);
+    //Enable I2C Module to start operations
+    EUSCI_B_I2C_enable(EUSCI_B0_BASE);
+    // set up interrupts
+    EUSCI_B_I2C_clearInterrupt(EUSCI_B0_BASE,
+        EUSCI_B_I2C_RECEIVE_INTERRUPT0 +
+        EUSCI_B_I2C_BYTE_COUNTER_INTERRUPT +
+        EUSCI_B_I2C_NAK_INTERRUPT
+        );
+    //Enable master Receive interrupt
+    EUSCI_B_I2C_enableInterrupt(EUSCI_B0_BASE,
+        EUSCI_B_I2C_RECEIVE_INTERRUPT0 +
+        EUSCI_B_I2C_BYTE_COUNTER_INTERRUPT +
+        EUSCI_B_I2C_NAK_INTERRUPT
+        );
 
-        if (d * fout < 600000000)              // VCO frequency to low check and maintain an even d value
-            d += 2;
-    }
-    msx_p1 = 128 * d - 512;
+    // make sure stop has been sent
+    while (EUSCI_B_I2C_SENDING_STOP == EUSCI_B_I2C_masterIsStopSent
+            (EUSCI_B0_BASE));
 
-    uint32_t fvco = (uint32_t) d * r * fout;
-
-    // Calc Feedback Multisynth Divider
-    double fmd = (double)fvco / fref;            // The FMD value has been found
-    int a = fmd;                                 // a is the integer part of the FMD value
-
-    double b_c = (double)fmd - a;                // Get b/c
-    uint32_t c = 1048575;
-    uint32_t b = (double)b_c * c;
-    if (b > 0)
-    {
-        c = (double)b / b_c + 0.5;               // Improves frequency precision in some cases
-        if (c > 1048575)
-            c = 1048575;
-    }
-
-    uint32_t msnx_p1 = 128 * a + 128 * b / c - 512;   // See datasheet 3.2
-    uint32_t msnx_p2 = 128 * b - c * (128 * b / c);
-    uint32_t msnx_p3 = c;
-
-    // Feedback Multisynth Divider register values
-    regs[0] = (msnx_p3 >> 8) & 0xFF;
-    regs[1] = msnx_p3 & 0xFF;
-    regs[2] = (msnx_p1 >> 16) & 0x03;
-    regs[3] = (msnx_p1 >> 8) & 0xFF;
-    regs[4] = msnx_p1 & 0xFF;
-    regs[5] = ((msnx_p3 >> 12) & 0xF0) + ((msnx_p2 >> 16) & 0x0F);
-    regs[6] = (msnx_p2 >> 8) & 0xFF;
-    regs[7] = msnx_p2 & 0xFF;
-
-    // Output Multisynth Divider and R register values
-    regs[8] = 0;                                  // (msx_p3 >> 8) & 0xFF
-    regs[9] = 1;                                  // msx_p3 & 0xFF
-    regs[10] = rx_div + msx_divby4 + ((msx_p1 >> 16) & 0x03);
-    regs[11] = (msx_p1 >> 8) & 0xFF;
-    regs[12] = msx_p1 & 0xFF;
-    regs[13] = 0;                                 // ((msx_p3 >> 12) & 0xF0) + (msx_p2 >> 16) & 0x0F
-    regs[14] = 0;                                 // (msx_p2 >> 8) & 0xFF
-    regs[15] = 0;                                 // msx_p2 & 0xFF
-
-    return;
+    // start by sending first byte
+    EUSCI_B_I2C_masterReceiveStart(EUSCI_B0_BASE);
+    // now sleep while I2C block receives all the data
+    __bis_SR_register(LPM0_bits + GIE);
 }
-******************************************/
+

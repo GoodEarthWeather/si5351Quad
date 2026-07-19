@@ -32,7 +32,7 @@ ORDERED_OBJS += \
 "./driverlib/MSP430FR2xx_4xx/timer_b.obj" \
 "./driverlib/MSP430FR2xx_4xx/tlv.obj" \
 "./driverlib/MSP430FR2xx_4xx/wdt_a.obj" \
-"../lnk_msp430fr4133.cmd" \
+"../lnk_msp430fr2476.cmd" \
 $(GEN_CMDS__FLAG) \
 -llibc.a \
 
@@ -143,21 +143,21 @@ endif
 
 # Add inputs and outputs from these tool invocations to the build variables 
 EXE_OUTPUTS += \
-emptyProject.out 
+si5351Quad.out 
 
 EXE_OUTPUTS__QUOTED += \
-"emptyProject.out" 
+"si5351Quad.out" 
 
 
 # All Target
 all: $(OBJS) $(CMD_SRCS) $(GEN_CMDS)
-	@$(MAKE) --no-print-directory -Onone "emptyProject.out"
+	@$(MAKE) --no-print-directory -Onone "si5351Quad.out"
 
 # Tool invocations
-emptyProject.out: $(OBJS) $(CMD_SRCS) $(GEN_CMDS)
+si5351Quad.out: $(OBJS) $(CMD_SRCS) $(GEN_CMDS)
 	@echo 'Building target: "$@"'
 	@echo 'Invoking: MSP430 Linker'
-	"/home/david/ti/ccs1281/ccs/tools/compiler/ti-cgt-msp430_21.6.2.LTS/bin/cl430" -vmspx --use_hw_mpy=none --advice:power="none" --advice:hw_config=all --define=__MSP430FR4133__ --define=DEPRECATED -g --printf_support=minimal --diag_warning=225 --diag_wrap=off --display_error_number --silicon_errata=CPU21 --silicon_errata=CPU22 --silicon_errata=CPU40 -z -m"emptyProject.map" --heap_size=160 --stack_size=160 --cinit_hold_wdt=on -i"/home/david/ti/ccs1281/ccs/ccs_base/msp430/include" -i"/home/david/ti/ccs1281/ccs/tools/compiler/ti-cgt-msp430_21.6.2.LTS/lib" -i"/home/david/ti/ccs1281/ccs/tools/compiler/ti-cgt-msp430_21.6.2.LTS/include" --reread_libs --diag_wrap=off --display_error_number --warn_sections --xml_link_info="emptyProject_linkInfo.xml" --use_hw_mpy=none --rom_model -o "emptyProject.out" $(ORDERED_OBJS)
+	"/home/david/ti/ccs1281/ccs/tools/compiler/ti-cgt-msp430_21.6.2.LTS/bin/cl430" -vmspx --use_hw_mpy=F5 --advice:power="none" --advice:hw_config=all --define=DEPRECATED --define=__MSP430FR2476__ -g --printf_support=minimal --diag_warning=225 --diag_wrap=off --display_error_number --silicon_errata=CPU21 --silicon_errata=CPU22 --silicon_errata=CPU40 -z -m"si5351Quad.map" --heap_size=160 --stack_size=160 --cinit_hold_wdt=on -i"/home/david/ti/ccs1281/ccs/ccs_base/msp430/include" -i"/home/david/ti/ccs1281/ccs/tools/compiler/ti-cgt-msp430_21.6.2.LTS/lib" -i"/home/david/ti/ccs1281/ccs/tools/compiler/ti-cgt-msp430_21.6.2.LTS/include" -i"/home/david/ti/ccs1281/ccs/ccs_base/msp430/lib/FR2xx" --priority --reread_libs --diag_wrap=off --display_error_number --warn_sections --xml_link_info="si5351Quad_linkInfo.xml" --use_hw_mpy=F5 --rom_model -o "si5351Quad.out" $(ORDERED_OBJS)
 	@echo 'Finished building target: "$@"'
 	@echo ' '
 

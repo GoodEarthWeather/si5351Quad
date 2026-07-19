@@ -4,7 +4,7 @@
 
 # Add inputs and outputs from these tool invocations to the build variables 
 CMD_SRCS += \
-../lnk_msp430fr4133.cmd 
+../lnk_msp430fr2476.cmd 
 
 C_SRCS += \
 ../main.c 

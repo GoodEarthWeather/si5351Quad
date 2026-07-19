@@ -3,11 +3,11 @@
 driverlib/MSP430FR2xx_4xx/sfr.obj: ../driverlib/MSP430FR2xx_4xx/sfr.c
 driverlib/MSP430FR2xx_4xx/sfr.obj: ../driverlib/MSP430FR2xx_4xx/inc/hw_memmap.h
 driverlib/MSP430FR2xx_4xx/sfr.obj: /home/david/ti/ccs1281/ccs/ccs_base/msp430/include/msp430.h
-driverlib/MSP430FR2xx_4xx/sfr.obj: /home/david/ti/ccs1281/ccs/ccs_base/msp430/include/msp430fr4133.h
+driverlib/MSP430FR2xx_4xx/sfr.obj: /home/david/ti/ccs1281/ccs/ccs_base/msp430/include/msp430fr2476.h
 driverlib/MSP430FR2xx_4xx/sfr.obj: /home/david/ti/ccs1281/ccs/ccs_base/msp430/include/in430.h
 driverlib/MSP430FR2xx_4xx/sfr.obj: /home/david/ti/ccs1281/ccs/tools/compiler/ti-cgt-msp430_21.6.2.LTS/include/intrinsics.h
 driverlib/MSP430FR2xx_4xx/sfr.obj: /home/david/ti/ccs1281/ccs/tools/compiler/ti-cgt-msp430_21.6.2.LTS/include/intrinsics_legacy_undefs.h
-driverlib/MSP430FR2xx_4xx/sfr.obj: /home/david/ti/ccs1281/ccs/ccs_base/msp430/include/msp430fr2xx_4xxgeneric.h
+driverlib/MSP430FR2xx_4xx/sfr.obj: /home/david/ti/ccs1281/ccs/ccs_base/msp430/include/legacy.h
 driverlib/MSP430FR2xx_4xx/sfr.obj: /home/david/ti/ccs1281/ccs/tools/compiler/ti-cgt-msp430_21.6.2.LTS/include/stdint.h
 driverlib/MSP430FR2xx_4xx/sfr.obj: /home/david/ti/ccs1281/ccs/tools/compiler/ti-cgt-msp430_21.6.2.LTS/include/_ti_config.h
 driverlib/MSP430FR2xx_4xx/sfr.obj: /home/david/ti/ccs1281/ccs/tools/compiler/ti-cgt-msp430_21.6.2.LTS/include/linkage.h
@@ -28,7 +28,7 @@ driverlib/MSP430FR2xx_4xx/sfr.obj: /home/david/ti/ccs1281/ccs/tools/compiler/ti-
 
 /home/david/ti/ccs1281/ccs/ccs_base/msp430/include/msp430.h:
 
-/home/david/ti/ccs1281/ccs/ccs_base/msp430/include/msp430fr4133.h:
+/home/david/ti/ccs1281/ccs/ccs_base/msp430/include/msp430fr2476.h:
 
 /home/david/ti/ccs1281/ccs/ccs_base/msp430/include/in430.h:
 
@@ -36,7 +36,7 @@ driverlib/MSP430FR2xx_4xx/sfr.obj: /home/david/ti/ccs1281/ccs/tools/compiler/ti-
 
 /home/david/ti/ccs1281/ccs/tools/compiler/ti-cgt-msp430_21.6.2.LTS/include/intrinsics_legacy_undefs.h:
 
-/home/david/ti/ccs1281/ccs/ccs_base/msp430/include/msp430fr2xx_4xxgeneric.h:
+/home/david/ti/ccs1281/ccs/ccs_base/msp430/include/legacy.h:
 
 /home/david/ti/ccs1281/ccs/tools/compiler/ti-cgt-msp430_21.6.2.LTS/include/stdint.h:
 
