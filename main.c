@@ -14,6 +14,8 @@
 // Critical Si5351 Registers
 #define DEVICE_STATUS           0
 #define REG_OUTPUT_ENABLE       3
+#define PLL_INPUT_SRC           15
+#define CLK_DISABLE_STATE       24
 #define REG_CLK0_CTRL           16
 #define REG_CLK1_CTRL           17
 #define REG_CLK2_CTRL           18
@@ -27,8 +29,12 @@
 #define REG_MS2_PARAMETERS      58
 #define SSEN                   149
 #define XTAL_LOAD_CAP          183
+#define PLL_RESET              177
+#define XTAL_LOAD_CAP          183
+#define SSEN                   149
 
-#define FIXED_DENOM             1000000ULL
+#define delay_us(x)     __delay_cycles((long) x * 8)
+
 #define I2C_RECEIVE 0
 #define I2C_SEND 1
 
@@ -36,24 +42,23 @@ static uint8_t RXData[4];  // used by interrupt routine to hold received data
 static uint8_t TXData[4];
 static uint8_t byteCount;
 static uint8_t I2CMode;  // indicate whether I2C is sending or receiving
+static uint32_t phaseParameter;  // number used to load phase offset registers
 
 void i2cReceiveData(void);
 void i2cSendRegister(uint8_t, uint8_t);
 void si5351_wait_for_init(void);
-void update_vfo_target(uint32_t, uint32_t);
-void enable_TransmitMode(void);
-void enable_ReceiveMode(void);
-void calculate_and_load_pll(uint32_t, uint32_t);
-void set_pll_fractional(uint32_t, uint32_t);
-void set_integer_ms(uint8_t, uint32_t);
 void initI2C(void);
 void initClocks(void);
+void si5351_disable_spread_spectrum(void);
+void CalcRegisters(const uint32_t, uint8_t *);
+void initialize_si5351(void);
 
-// Global tracking variables for quick TR switching
-uint32_t current_vfo_hz = 14074000;
-uint32_t current_ms_div = 64;
 
 void main(void) {
+    uint8_t regs[16];                  // Registers holding the FMD and OMD values
+    const uint32_t freq = 7000000;    // The wanted output frequency
+    uint8_t i, j;
+
     WDT_A_hold(WDT_A_BASE);
     PMM_unlockLPM5();
 
@@ -62,22 +67,49 @@ void main(void) {
     initI2C();
 
     // 2. NEW: Wait until the Si5351 clears its internal NVM boot flag
-    si5351_wait_for_init();
-
-    // 3. Safe to proceed with active device initialization parameters
-    // Register 183 sets Crystal Load Capacitance (Optional, highly recommended for stabilization)
-    // 0xD2 = 10pF, 0x92 = 8pF, 0x52 = 6pF
-    i2cSendRegister(XTAL_LOAD_CAP, 0xD2);      // Set crystal load capacitor to 10pF (default)
+    initialize_si5351();
+    //si5351_wait_for_init();
 
     // 3. NEW: Explicitly strip out Spread Spectrum frequency modulation
-    i2cSendRegister(SSEN, 0x0);                // Disable spread spectrum
+    //i2cSendRegister(SSEN, 0x0);                // Disable spread spectrum
+    si5351_disable_spread_spectrum();
 
-    // 4. Default VFO tune to 20-Meter FT8 frequency (14.074 MHz)
-    update_vfo_target(14074000, 64);
+    CalcRegisters(freq, regs);
+
+    // Load PLLA Feedback Multisynth NA
+    for (i = 0; i < 8; i++)
+        i2cSendRegister(REG_PLLA_PARAMETERS + i, regs[i]);
+
+    // Load Output Multisynth0 with d (e and f already set during init. and never changed)
+    for (i = 8, j = 0; j < 8; i++, j++)
+        i2cSendRegister(REG_MS0_PARAMETERS+j, regs[i]);
+    // Load Output Multisynth1 with d (e and f already set during init. and never changed)
+    for (i = 8, j = 0; j < 8; i++, j++)
+        i2cSendRegister(REG_MS1_PARAMETERS+j, regs[i]);
+
+    i2cSendRegister(REG_CLK0_PHOFF, 0);
+    i2cSendRegister(REG_CLK1_PHOFF, (uint8_t)phaseParameter);
+
+    // Reset PLLA
+    delay_us(500);            // Allow registers to settle before resetting the PLL
+    i2cSendRegister(PLL_RESET, 0x20);
 
     while(1) {
         // T/R switching loops go here
     }
+}
+// Disables the internal Spread Spectrum modulation to prevent phase jitter
+void si5351_disable_spread_spectrum(void) {
+
+    i2cSendRegister(SSEN,0);
+    // 1. Read the current configuration state of Register 149
+    i2cReceiveData();
+
+    // 2. Clear Bit 7 (SSC_EN) while preserving all other tracking bits [6:0]
+    RXData[0] &= ~0x80;
+
+    // 3. Write the cleaned byte structure back to the device
+    i2cSendRegister(SSEN, RXData[0]);
 }
 
 void initClocks(void)
@@ -112,87 +144,6 @@ void initI2C(void) {
     GPIO_setAsPeripheralModuleFunctionOutputPin(GPIO_PORT_P1, GPIO_PIN2 | GPIO_PIN3, GPIO_PRIMARY_MODULE_FUNCTION);
 }
 
-void set_integer_ms(uint8_t base_reg, uint32_t divider) {
-    // FIXED: Appended UL to constant to enforce 32-bit register math width
-    uint32_t p1 = 128UL * divider - 512UL;
-
-    i2cSendRegister(base_reg,0);
-    i2cSendRegister(base_reg+1,1);
-    i2cSendRegister(base_reg+2,(p1 >> 16) & 0x03);
-    i2cSendRegister(base_reg+3,(p1 >> 8) & 0xFF);
-    i2cSendRegister(base_reg+4,p1 & 0xFF);
-    i2cSendRegister(base_reg+5,0);
-    i2cSendRegister(base_reg+6,0);
-    i2cSendRegister(base_reg+7,0x40); // Integer Mode override bit
-
-   }
-
-void set_pll_fractional(uint32_t mult_integer, uint32_t mult_numerator) {
-
-    // FIXED: All literal constants have explicitly assigned type width qualifiers (UL/ULL)
-    uint32_t p1 = 128UL * mult_integer + ((128UL * mult_numerator) / FIXED_DENOM) - 512UL;
-    uint32_t p2 = 128UL * mult_numerator - FIXED_DENOM * ((128UL * mult_numerator) / FIXED_DENOM);
-    uint32_t p3 = (uint32_t)FIXED_DENOM;
-
-    i2cSendRegister(REG_PLLA_PARAMETERS,(p3 >> 8) & 0xFF);
-    i2cSendRegister(REG_PLLA_PARAMETERS+1,p3 & 0xFF);
-    i2cSendRegister(REG_PLLA_PARAMETERS+2,(p1 >> 16) & 0x03);
-    i2cSendRegister(REG_PLLA_PARAMETERS+3,(p1 >> 8) & 0xFF);
-    i2cSendRegister(REG_PLLA_PARAMETERS+4,p1 & 0xFF);
-    i2cSendRegister(REG_PLLA_PARAMETERS+5,(((p3 >> 16) & 0x0F) << 4) | ((p2 >> 16) & 0x0F));
-    i2cSendRegister(REG_PLLA_PARAMETERS+6,(p2 >> 8) & 0xFF);
-    i2cSendRegister(REG_PLLA_PARAMETERS+7,p2 & 0xFF);
-
-}
-
-void calculate_and_load_pll(uint32_t target_hz, uint32_t ms_div) {
-    uint64_t vco_hz = (uint64_t)target_hz * (uint64_t)ms_div;
-    uint32_t pll_mult_int = (uint32_t)(vco_hz / XTAL_FREQ);
-    uint32_t pll_mult_num = (uint32_t)(((vco_hz % XTAL_FREQ) * FIXED_DENOM) / XTAL_FREQ);
-
-    set_pll_fractional(pll_mult_int, pll_mult_num);
-}
-
-void enable_ReceiveMode(void) {
-    i2cSendRegister(REG_OUTPUT_ENABLE, 0xFF);
-    calculate_and_load_pll(current_vfo_hz, current_ms_div);
-
-    set_integer_ms(REG_MS0_PARAMETERS, current_ms_div);
-    set_integer_ms(REG_MS1_PARAMETERS, current_ms_div);
-
-    i2cSendRegister(REG_CLK0_PHOFF, 0);
-    i2cSendRegister(REG_CLK1_PHOFF, (uint8_t)current_ms_div);
-
-    i2cSendRegister(REG_PLL_RESET, 0x20);
-
-    i2cSendRegister(REG_CLK2_CTRL, 0x80);
-    i2cSendRegister(REG_CLK0_CTRL, 0x4F);
-    i2cSendRegister(REG_CLK1_CTRL, 0x4F);
-
-    i2cSendRegister(REG_OUTPUT_ENABLE, 0xFC);
-}
-
-void enable_TransmitMode(void) {
-    i2cSendRegister(REG_OUTPUT_ENABLE, 0xFF);
-    calculate_and_load_pll(current_vfo_hz, current_ms_div);
-
-    set_integer_ms(REG_MS2_PARAMETERS, current_ms_div);
-
-    i2cSendRegister(REG_PLL_RESET, 0x20);
-
-    i2cSendRegister(REG_CLK0_CTRL, 0x80);
-    i2cSendRegister(REG_CLK1_CTRL, 0x80);
-    i2cSendRegister(REG_CLK2_CTRL, 0x4F);
-
-    i2cSendRegister(REG_OUTPUT_ENABLE, 0xFB);
-}
-
-void update_vfo_target(uint32_t target_hz, uint32_t ms_div) {
-    current_vfo_hz = target_hz;
-    current_ms_div = ms_div;
-    enable_ReceiveMode();
-}
-
 
 // Polling loop to block until the Si5351 internal logic finishes booting up
 void si5351_wait_for_init(void) {
@@ -201,8 +152,127 @@ void si5351_wait_for_init(void) {
         RXData[0] = 0;
         i2cReceiveData();
     } while (RXData[0] & 0x80);  // keep doing this until SYS_INIT bit is low
+
 }
 
+void initialize_si5351(void)
+{
+    // Initialize Si5351A
+    si5351_wait_for_init();
+    i2cSendRegister(REG_OUTPUT_ENABLE, 0xFF);            // Output Enable Control, disable all
+
+    i2cSendRegister (REG_CLK0_CTRL, 0x80);       // CLKi Control, power down CLKi
+    i2cSendRegister (REG_CLK1_CTRL, 0x80);       // CLKi Control, power down CLKi
+    i2cSendRegister (REG_CLK2_CTRL, 0x80);       // CLKi Control, power down CLKi
+
+    i2cSendRegister(PLL_INPUT_SRC, 0x00);           // PLL Input Source, select the XTAL input as the reference clock for PLLA and PLLB
+    i2cSendRegister(CLK_DISABLE_STATE, 0x00);           // CLK3–0 Disable State,
+
+    // Output Multisynth0, e = 0, f = 1, MS0_P2 and MSO_P3
+    i2cSendRegister(42, 0x00);
+    i2cSendRegister(43, 0x01);
+    i2cSendRegister(47, 0x00);
+    i2cSendRegister(48, 0x00);
+    i2cSendRegister(49, 0x00);
+
+    i2cSendRegister(REG_CLK0_CTRL, 0x4F); // Power up CLK0, PLLA, MS0 operates in integer mode, Output Clock 0 is not inverted, Select MultiSynth 0 as the source for CLK0 and 8 mA
+    i2cSendRegister(REG_CLK1_CTRL, 0x4F); // Power up CLK1, PLLA, MS0 operates in integer mode, Output Clock 0 is not inverted, Select MultiSynth 0 as the source for CLK1 and 8 mA
+    i2cSendRegister(REG_CLK2_CTRL, 0xCF);
+
+    // Reference load configuration
+    i2cSendRegister(XTAL_LOAD_CAP, 0x12);          // Set reference load C: 6 pF = 0x12, 8 pF = 0x92, 10 pF = 0xD2
+
+
+    // Turn CLK0 output on
+    i2cSendRegister(REG_OUTPUT_ENABLE, 0xFC);            // Output Enable Control. Active low
+}
+
+void CalcRegisters(const uint32_t fout, uint8_t *regs)
+{
+    uint32_t fref = 27000000UL;                  // The reference frequency
+
+    // Calc Output Multisynth Divider and R with e = 0 and f = 1 => msx_p2 = 0 and msx_p3 = 1
+    uint32_t d = 4;
+    uint32_t msx_p1 = 0;                         // If fout > 150 MHz then MSx_P1 = 0 and MSx_DIVBY4 = 0xC0, see datasheet 4.1.3
+    int msx_divby4 = 0;
+    int rx_div = 0;
+    int r = 1;
+
+    if (fout > 150000000UL)
+        msx_divby4 = 0x0C;                       // MSx_DIVBY4[1:0] = 0b11, see datasheet 4.1.3
+    else if (fout < 292969UL)                    // If fout < 500 kHz then use R divider, see datasheet 4.2.2. In reality this means > 292 968,75 Hz when d = 2048
+    {
+        int rd = 0;
+        while ((r < 128) && (r * fout < 292969UL))
+        {
+            r <<= 1;
+            rd++;
+        }
+        rx_div = rd << 4;
+
+        d = 600000000UL / (r * fout);            // Use lowest VCO frequency but handle d minimum
+        if (d % 2)                               // Make d even to reduce spurious and phase noise/jitter, see datasheet 4.1.2.1.
+            d++;
+
+        if (d * r * fout < 600000000UL)          // VCO frequency to low check and maintain an even d value
+            d += 2;
+    }
+    else                                         // 292968 Hz <= fout <= 150 MHz
+    {
+        d = 600000000UL / fout;                  // Use lowest VCO frequency but handle d minimum
+        if (d < 6)
+            d = 6;
+        else if (d % 2)                          // Make d even to reduce phase noise/jitter, see datasheet 4.1.2.1.
+           d++;
+
+        if (d * fout < 600000000UL)              // VCO frequency to low check and maintain an even d value
+            d += 2;
+    }
+    msx_p1 = 128 * d - 512;
+    phaseParameter = d;
+
+    uint32_t fvco = (uint32_t) d * r * fout;
+
+    // Calc Feedback Multisynth Divider
+    double fmd = (double)fvco / fref;            // The FMD value has been found
+    int a = fmd;                                 // a is the integer part of the FMD value
+
+    double b_c = (double)fmd - a;                // Get b/c
+    uint32_t c = 1048575UL;
+    uint32_t b = (double)b_c * c;
+    if (b > 0)
+    {
+        c = (double)b / b_c + 0.5;               // Improves frequency precision in some cases
+        if (c > 1048575UL)
+            c = 1048575UL;
+    }
+
+    uint32_t msnx_p1 = 128 * a + 128 * b / c - 512;   // See datasheet 3.2
+    uint32_t msnx_p2 = 128 * b - c * (128 * b / c);
+    uint32_t msnx_p3 = c;
+
+    // Feedback Multisynth Divider register values
+    regs[0] = (msnx_p3 >> 8) & 0xFF;
+    regs[1] = msnx_p3 & 0xFF;
+    regs[2] = (msnx_p1 >> 16) & 0x03;
+    regs[3] = (msnx_p1 >> 8) & 0xFF;
+    regs[4] = msnx_p1 & 0xFF;
+    regs[5] = ((msnx_p3 >> 12) & 0xF0) + ((msnx_p2 >> 16) & 0x0F);
+    regs[6] = (msnx_p2 >> 8) & 0xFF;
+    regs[7] = msnx_p2 & 0xFF;
+
+    // Output Multisynth Divider and R register values
+    regs[8] = 0;                                  // (msx_p3 >> 8) & 0xFF
+    regs[9] = 1;                                  // msx_p3 & 0xFF
+    regs[10] = rx_div + msx_divby4 + ((msx_p1 >> 16) & 0x03);
+    regs[11] = (msx_p1 >> 8) & 0xFF;
+    regs[12] = msx_p1 & 0xFF;
+    regs[13] = 0;                                 // ((msx_p3 >> 12) & 0xF0) + (msx_p2 >> 16) & 0x0F
+    regs[14] = 0;                                 // (msx_p2 >> 8) & 0xFF
+    regs[15] = 0;                                 // msx_p2 & 0xFF
+
+    return;
+}
 
 #pragma vector=USCI_B0_VECTOR
 __interrupt
