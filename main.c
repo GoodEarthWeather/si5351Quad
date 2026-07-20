@@ -46,7 +46,6 @@ static uint32_t phaseParameter;  // number used to load phase offset registers
 
 void i2cReceiveData(void);
 void i2cSendRegister(uint8_t, uint8_t);
-void si5351_wait_for_init(void);
 void initI2C(void);
 void initClocks(void);
 void si5351_disable_spread_spectrum(void);
@@ -56,7 +55,7 @@ void initialize_si5351(void);
 
 void main(void) {
     uint8_t regs[16];                  // Registers holding the FMD and OMD values
-    const uint32_t freq = 7000000;    // The wanted output frequency
+    const uint32_t freq = 21000000;    // The wanted output frequency
     uint8_t i, j;
 
     WDT_A_hold(WDT_A_BASE);
@@ -68,7 +67,6 @@ void main(void) {
 
     // 2. NEW: Wait until the Si5351 clears its internal NVM boot flag
     initialize_si5351();
-    //si5351_wait_for_init();
 
     // 3. NEW: Explicitly strip out Spread Spectrum frequency modulation
     //i2cSendRegister(SSEN, 0x0);                // Disable spread spectrum
@@ -87,8 +85,9 @@ void main(void) {
     for (i = 8, j = 0; j < 8; i++, j++)
         i2cSendRegister(REG_MS1_PARAMETERS+j, regs[i]);
 
-    i2cSendRegister(REG_CLK0_PHOFF, 0);
-    i2cSendRegister(REG_CLK1_PHOFF, (uint8_t)phaseParameter);
+    // swap cll0, clk1 below to change phase relationship (usb/lsb)
+    i2cSendRegister(REG_CLK1_PHOFF, 0);
+    i2cSendRegister(REG_CLK0_PHOFF, (uint8_t)phaseParameter);
 
     // Reset PLLA
     delay_us(500);            // Allow registers to settle before resetting the PLL
@@ -145,20 +144,16 @@ void initI2C(void) {
 }
 
 
-// Polling loop to block until the Si5351 internal logic finishes booting up
-void si5351_wait_for_init(void) {
+void initialize_si5351(void)
+{
+    // Initialize Si5351A
     do {
         i2cSendRegister(DEVICE_STATUS,0);  // write address of status register
         RXData[0] = 0;
         i2cReceiveData();
     } while (RXData[0] & 0x80);  // keep doing this until SYS_INIT bit is low
 
-}
 
-void initialize_si5351(void)
-{
-    // Initialize Si5351A
-    si5351_wait_for_init();
     i2cSendRegister(REG_OUTPUT_ENABLE, 0xFF);            // Output Enable Control, disable all
 
     i2cSendRegister (REG_CLK0_CTRL, 0x80);       // CLKi Control, power down CLKi
@@ -169,21 +164,21 @@ void initialize_si5351(void)
     i2cSendRegister(CLK_DISABLE_STATE, 0x00);           // CLK3–0 Disable State,
 
     // Output Multisynth0, e = 0, f = 1, MS0_P2 and MSO_P3
-    i2cSendRegister(42, 0x00);
-    i2cSendRegister(43, 0x01);
-    i2cSendRegister(47, 0x00);
-    i2cSendRegister(48, 0x00);
-    i2cSendRegister(49, 0x00);
+    //i2cSendRegister(42, 0x00);
+    //i2cSendRegister(43, 0x01);
+    //i2cSendRegister(47, 0x00);
+    //i2cSendRegister(48, 0x00);
+    //i2cSendRegister(49, 0x00);
 
     i2cSendRegister(REG_CLK0_CTRL, 0x4F); // Power up CLK0, PLLA, MS0 operates in integer mode, Output Clock 0 is not inverted, Select MultiSynth 0 as the source for CLK0 and 8 mA
-    i2cSendRegister(REG_CLK1_CTRL, 0x4F); // Power up CLK1, PLLA, MS0 operates in integer mode, Output Clock 0 is not inverted, Select MultiSynth 0 as the source for CLK1 and 8 mA
+    i2cSendRegister(REG_CLK1_CTRL, 0x4F); // Power up CLK1, PLLA, MS0 operates in integer mode, Output Clock 1 is not inverted, Select MultiSynth 0 as the source for CLK1 and 8 mA
     i2cSendRegister(REG_CLK2_CTRL, 0xCF);
 
     // Reference load configuration
     i2cSendRegister(XTAL_LOAD_CAP, 0x12);          // Set reference load C: 6 pF = 0x12, 8 pF = 0x92, 10 pF = 0xD2
 
 
-    // Turn CLK0 output on
+    // Turn CLK0 and CLK1 output on
     i2cSendRegister(REG_OUTPUT_ENABLE, 0xFC);            // Output Enable Control. Active low
 }
 
